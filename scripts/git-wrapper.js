@@ -1,31 +1,54 @@
 #!/usr/bin/env node
 /**
- * Git wrapper that provides detailed error messages for GitRepublic operations
+ * GitRepublic CLI - Unified command for git operations and API access
  * 
- * This script wraps git commands and provides helpful error messages when
- * operations fail, especially for authentication and permission errors.
+ * This script handles both git commands (with enhanced error messages) and
+ * API commands (push-all, repos, publish, etc.). It delegates API commands
+ * to gitrepublic.js and handles git commands directly.
  * 
  * Usage:
- *   gitrepublic <git-command> [arguments...]
- *   gitrep <git-command> [arguments...]  (shorter alias)
+ *   gitrepublic <command> [arguments...]
+ *   gitrep <command> [arguments...]  (shorter alias)
  * 
- * Examples:
+ * Git Commands:
  *   gitrep clone https://domain.com/api/git/npub1.../repo.git gitrepublic-web
  *   gitrep push gitrepublic-web main
  *   gitrep pull gitrepublic-web main
- *   gitrep fetch gitrepublic-web
+ * 
+ * API Commands:
+ *   gitrep push-all [branch] [--force] [--tags] [--dry-run]
+ *   gitrep repos list
+ *   gitrep publish <subcommand>
  */
 
 import { spawn, execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { finalizeEvent } from 'nostr-tools';
 import { decode } from 'nostr-tools/nip19';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Import API commands handler
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const API_SCRIPT = join(__dirname, 'gitrepublic.js');
 
 // NIP-98 auth event kind
 const KIND_NIP98_AUTH = 27235;
 
 // Commands that interact with remotes (need error handling)
 const REMOTE_COMMANDS = ['clone', 'push', 'pull', 'fetch', 'ls-remote'];
+
+// API commands that should be handled by gitrepublic.js
+const API_COMMANDS = [
+  'push-all', 'pushAll',
+  'repos', 'repo',
+  'file',
+  'search',
+  'publish',
+  'verify',
+  'config'
+];
 
 // Get git remote URL
 function getRemoteUrl(remote = 'origin') {
@@ -244,13 +267,22 @@ Usage:
   gitrepublic <git-command> [arguments...]
   gitrep <git-command> [arguments...]  (shorter alias)
 
-Examples:
+Git Commands:
   gitrep clone https://domain.com/api/git/npub1.../repo.git gitrepublic-web
   gitrep push gitrepublic-web main
   gitrep pull gitrepublic-web main
   gitrep fetch gitrepublic-web
   gitrep branch
   gitrep commit -m "My commit"
+
+API Commands:
+  gitrep push-all [branch] [--force] [--tags] [--dry-run]  Push to all remotes
+  gitrep repos list                                         List repositories
+  gitrep repos get <npub> <repo>                           Get repository info
+  gitrep publish <subcommand>                              Publish Nostr events
+  gitrep search <query>                                    Search repositories
+  gitrep verify <event-file>                               Verify Nostr events
+  gitrep config [server]                                   Show configuration
 
 Note: "gitrep" is a shorter alias for "gitrepublic" - both work the same way.
 We suggest using "gitrepublic-web" as the remote name instead of "origin"
@@ -261,11 +293,14 @@ Features:
   - Enhanced error messages for GitRepublic repositories
   - Detailed authentication and permission error information
   - Transparent pass-through for non-GitRepublic repositories (GitHub, GitLab, etc.)
+  - API commands for repository management and Nostr event publishing
 
 For GitRepublic repositories, the wrapper provides:
   - Detailed 401/403 error messages with pubkeys and maintainer information
   - Helpful guidance on how to fix authentication issues
   - Automatic fetching of error details from the server
+
+Run any command with --help for detailed usage information.
 
 Documentation: https://github.com/silberengel/gitrepublic-cli
 GitCitadel: Visit us on GitHub: https://github.com/ShadowySupercode or on our homepage: https://gitcitadel.com
@@ -279,14 +314,33 @@ Licensed under MIT License
 async function main() {
   const args = process.argv.slice(2);
   
-  // Check for help flag
+  const command = args[0];
+  const commandArgs = args.slice(1);
+
+  // Check if this is an API command - if so, delegate to gitrepublic.js
+  // Convert kebab-case to camelCase for comparison
+  const commandKey = command ? command.replace(/-([a-z])/g, (g) => g[1].toUpperCase()) : null;
+  if (command && (API_COMMANDS.includes(command) || API_COMMANDS.includes(commandKey))) {
+    // This is an API command, delegate to gitrepublic.js
+    const apiProcess = spawn('node', [API_SCRIPT, ...args], {
+      stdio: 'inherit',
+      cwd: __dirname
+    });
+    apiProcess.on('close', (code) => {
+      process.exit(code || 0);
+    });
+    apiProcess.on('error', (err) => {
+      console.error('Error running API command:', err.message);
+      process.exit(1);
+    });
+    return;
+  }
+  
+  // Check for help flag (only if not an API command)
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
     showHelp();
     process.exit(0);
   }
-
-  const command = args[0];
-  const commandArgs = args.slice(1);
 
   // For clone, check if URL is GitRepublic
   if (command === 'clone' && commandArgs.length > 0) {

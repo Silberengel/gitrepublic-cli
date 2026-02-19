@@ -337,9 +337,15 @@ async function signCommitMessage(commitMessageFile) {
       try {
         const relaysEnv = process.env.NOSTR_RELAYS;
         const relays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : [
-          'wss://theforest.nostr1.com',
+          'wss://nostr.land',
           'wss://relay.damus.io',
-          'wss://nostr.land'
+          'wss://thecitadel.nostr1.com',
+          'wss://nostr21.com',
+          'wss://theforest.nostr1.com',
+          'wss://freelay.sovbit.host',
+          'wss://nostr.sovbit.host',
+          'wss://bevos.nostr1.com',
+          'wss://relay.primal.net',
         ];
         
         const pool = new SimplePool();

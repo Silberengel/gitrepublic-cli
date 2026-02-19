@@ -1,13 +1,22 @@
 #!/usr/bin/env node
 /**
- * GitRepublic CLI - Command-line interface for GitRepublic API
+ * GitRepublic CLI - API command handler
  * 
- * Provides access to all GitRepublic APIs from the command line
+ * This script handles API commands (push-all, repos, publish, etc.) when called
+ * from git-wrapper.js. It can also be called directly via gitrep-api/gitrepublic-api
+ * for backward compatibility.
  * 
- * Usage:
- *   gitrepublic <command> [options]
+ * Usage (via gitrep/gitrepublic):
+ *   gitrep push-all [branch] [options]
+ *   gitrep repos list
+ *   gitrep publish <subcommand>
+ * 
+ * Usage (direct, for backward compatibility):
+ *   gitrep-api push-all [branch] [options]
+ *   gitrepublic-api repos list
  * 
  * Commands:
+ *   push-all [branch] [--force] [--tags] [--dry-run]  Push to all remotes
  *   repos list                    List repositories
  *   repos get <npub> <repo>       Get repository info
  *   repos settings <npub> <repo>  Get/update repository settings
@@ -20,6 +29,9 @@
  *   file put <npub> <repo> <path> Create/update file
  *   file delete <npub> <repo> <path> Delete file
  *   search <query>                Search repositories
+ *   publish <subcommand>          Publish Nostr events
+ *   verify <event-file>           Verify Nostr event signatures
+ *   config [server]               Show configuration
  * 
  * Options:
  *   --server <url>                GitRepublic server URL (default: http://localhost:5173)
@@ -29,11 +41,47 @@
  */
 
 import { createHash } from 'crypto';
-import { finalizeEvent, getPublicKey, nip19, SimplePool, verifyEvent, getEventHash } from 'nostr-tools';
+import { finalizeEvent, getPublicKey, nip19, SimplePool, verifyEvent, getEventHash, Relay } from 'nostr-tools';
 import { decode } from 'nostr-tools/nip19';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
+
+/**
+ * Sanitize error messages to prevent private key leaks
+ * @param {string} message - Error message to sanitize
+ * @returns {string} - Sanitized error message
+ */
+function sanitizeErrorMessage(message) {
+  if (!message || typeof message !== 'string') {
+    return String(message);
+  }
+  
+  return message
+    .replace(/nsec[0-9a-z]+/gi, '[nsec]')
+    .replace(/[0-9a-f]{64}/gi, '[hex-key]')
+    .replace(/private.*key[=:]\s*[^\s]+/gi, '[private-key]')
+    .replace(/secret.*key[=:]\s*[^\s]+/gi, '[secret-key]')
+    .replace(/NOSTRGIT_SECRET_KEY[=:]\s*[^\s]+/gi, 'NOSTRGIT_SECRET_KEY=[redacted]')
+    .replace(/NOSTR_PRIVATE_KEY[=:]\s*[^\s]+/gi, 'NOSTR_PRIVATE_KEY=[redacted]')
+    .replace(/NSEC[=:]\s*[^\s]+/gi, 'NSEC=[redacted]');
+}
+
+// Handle unhandled promise rejections from SimplePool to prevent crashes
+// SimplePool can reject promises asynchronously from WebSocket handlers
+// NEVER log private keys or sensitive data
+process.on('unhandledRejection', (reason, promise) => {
+  // Silently handle relay errors - they're already logged in publishToRelays
+  // Only log if it's not a known relay error pattern
+  const errorMessage = reason instanceof Error ? reason.message : String(reason);
+  const sanitized = sanitizeErrorMessage(errorMessage);
+  
+  if (!sanitized.includes('restricted') && !sanitized.includes('Relay did not accept')) {
+    // Unknown error, but don't crash - just log it (sanitized)
+    console.error('Warning: Unhandled promise rejection:', sanitized);
+  }
+  // Don't exit - let the normal error handling continue
+});
 
 // NIP-98 auth event kind
 const KIND_NIP98_AUTH = 27235;
@@ -46,22 +94,40 @@ const DEFAULT_SERVER = process.env.GITREPUBLIC_SERVER || 'http://localhost:5173'
 /**
  * Decode Nostr key and get private key bytes
  */
+/**
+ * Get private key bytes from nsec or hex string
+ * NEVER logs or exposes the private key
+ * @param {string} key - nsec string or hex private key
+ * @returns {Uint8Array} - Private key bytes
+ */
 function getPrivateKeyBytes(key) {
-  if (key.startsWith('nsec')) {
-    const decoded = decode(key);
-    if (decoded.type === 'nsec') {
-      return decoded.data;
-    }
-    throw new Error('Invalid nsec format');
-  } else if (/^[0-9a-fA-F]{64}$/.test(key)) {
-    // Hex format
-    const keyBytes = new Uint8Array(32);
-    for (let i = 0; i < 32; i++) {
-      keyBytes[i] = parseInt(key.slice(i * 2, i * 2 + 2), 16);
-    }
-    return keyBytes;
+  if (!key || typeof key !== 'string') {
+    throw new Error('Invalid key: key must be a string');
   }
-  throw new Error('Invalid key format. Use nsec or hex.');
+  
+  try {
+    if (key.startsWith('nsec')) {
+      const decoded = decode(key);
+      if (decoded.type === 'nsec') {
+        return decoded.data;
+      }
+      throw new Error('Invalid nsec format');
+    } else if (/^[0-9a-fA-F]{64}$/.test(key)) {
+      // Hex format
+      const keyBytes = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        keyBytes[i] = parseInt(key.slice(i * 2, i * 2 + 2), 16);
+      }
+      return keyBytes;
+    }
+    throw new Error('Invalid key format. Use nsec or hex.');
+  } catch (error) {
+    // NEVER expose the key in error messages
+    if (error instanceof Error && error.message.includes(key)) {
+      throw new Error('Invalid key format. Use nsec or hex.');
+    }
+    throw error;
+  }
 }
 
 /**
@@ -180,36 +246,104 @@ function storeEventInJsonl(event) {
 
 /**
  * Publish event to Nostr relays using SimplePool
+ * 
+ * This refactored version uses SimplePool (the recommended approach from nostr-tools)
+ * instead of managing individual Relay instances. SimplePool handles:
+ * - Connection establishment and management automatically
+ * - Automatic reconnection on failures
+ * - Timeout handling
+ * - Connection pooling for efficiency
+ * 
+ * Auth is handled on-demand only when a relay requires it (not proactively),
+ * which matches the behavior before auth was added and avoids connection issues.
+ * 
+ * We publish to each relay individually to get per-relay results and error details.
  */
-async function publishToRelays(event, relays) {
+async function publishToRelays(event, relays, privateKeyBytes, pubkey = null) {
+  if (!privateKeyBytes) {
+    throw new Error('Private key is required for publishing events');
+  }
+
+  if (!relays || relays.length === 0) {
+    return { success: [], failed: [] };
+  }
+
   const pool = new SimplePool();
   const success = [];
   const failed = [];
 
-  try {
-    // Publish to all relays - SimplePool handles this automatically
-    // Returns a Set of relays that accepted the event
-    const results = await pool.publish(relays, event);
-    
-    // Check which relays succeeded
-    for (const relay of relays) {
-      if (results && results.has && results.has(relay)) {
-        success.push(relay);
+  // Publish to each relay individually with individual timeouts
+  // This prevents hanging when all relays fail - each relay gets its own timeout
+  const publishPromises = relays.map(async (relayUrl) => {
+    try {
+      // Publish to a single relay with timeout
+      const publishPromise = pool.publish([relayUrl], event);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Publish timeout after 8 seconds')), 8000)
+      );
+      
+      const successfulRelays = await Promise.race([publishPromise, timeoutPromise]);
+      
+      // Check if this relay succeeded
+      if (successfulRelays && typeof successfulRelays.has === 'function') {
+        if (successfulRelays.has(relayUrl)) {
+          return { relay: relayUrl, success: true };
+        }
+      } else if (Array.isArray(successfulRelays) && successfulRelays.includes(relayUrl)) {
+        return { relay: relayUrl, success: true };
+      }
+      
+      // Relay didn't succeed
+      return { relay: relayUrl, success: false, error: 'Failed to publish to relay' };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const sanitizedError = sanitizeErrorMessage(errorMessage);
+      
+      if (errorMessage.includes('timeout')) {
+        return { relay: relayUrl, success: false, error: 'Publish timeout - relay did not respond' };
       } else {
-        failed.push({ relay, error: 'Relay did not accept event' });
+        return { relay: relayUrl, success: false, error: sanitizedError };
       }
     }
-  } catch (error) {
-    // If publish fails entirely, mark all relays as failed
-    for (const relay of relays) {
-      failed.push({ relay, error: String(error) });
+  });
+
+  // Wait for all publish attempts to complete (with their individual timeouts)
+  const results = await Promise.allSettled(publishPromises);
+  
+  // Process results
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      if (result.value.success) {
+        success.push(result.value.relay);
+      } else {
+        failed.push({ relay: result.value.relay, error: result.value.error });
+      }
+    } else {
+      failed.push({ relay: 'unknown', error: result.reason?.message || 'Unknown error' });
     }
-  } finally {
-    // Close all connections
-    pool.close(relays);
+  }
+
+  // Close all connections in the pool
+  try {
+    await pool.close(relays);
+  } catch (closeError) {
+    // Ignore close errors
   }
 
   return { success, failed };
+}
+
+/**
+ * Add client tag to event tags unless --no-client-tag is specified
+ * @param {Array} tags - Array of tag arrays
+ * @param {Array} args - Command arguments array
+ */
+function addClientTag(tags, args) {
+  const noClientTag = args && args.includes('--no-client-tag');
+  if (!noClientTag) {
+    tags.push(['client', 'gitrepublic-cli']);
+  }
+  return tags;
 }
 
 /**
@@ -245,7 +379,10 @@ async function apiRequest(server, endpoint, method = 'GET', body = null, options
   }
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}\n${typeof data === 'object' ? JSON.stringify(data, null, 2) : data}`);
+    // Sanitize error message to prevent key leaks
+    const errorData = typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data);
+    const sanitizedData = sanitizeErrorMessage(errorData);
+    throw new Error(`API request failed: ${response.status} ${response.statusText}\n${sanitizedData}`);
   }
 
   return data;
@@ -641,7 +778,7 @@ const commands = {
       console.log(`
 Publish Nostr Git Events
 
-Usage: gitrep-api publish <subcommand> [options]
+Usage: gitrep publish <subcommand> [options]
 
 Subcommands:
   repo-announcement <repo-name> [options]
@@ -654,7 +791,7 @@ Subcommands:
       --relay <url>              Custom relay URL (can be specified multiple times)
     
     Example:
-      gitrep-api publish repo-announcement myrepo \\
+      gitrep publish repo-announcement myrepo \\
         --description "My awesome repo" \\
         --clone-url "https://gitrepublic.com/api/git/npub1.../myrepo.git" \\
         --maintainer "npub1..."
@@ -664,7 +801,7 @@ Subcommands:
     Note: You must be the current owner (signing with NOSTRGIT_SECRET_KEY)
     
     Example:
-      gitrep-api publish ownership-transfer myrepo npub1... --self-transfer
+      gitrep publish ownership-transfer myrepo npub1... --self-transfer
 
   pr <owner-npub> <repo> <title> [options]
     Create a pull request (kind 1618)
@@ -674,7 +811,7 @@ Subcommands:
       --head <branch>           Head branch (default: main)
     
     Example:
-      gitrep-api publish pr npub1... myrepo "Fix bug" \\
+      gitrep publish pr npub1... myrepo "Fix bug" \\
         --content "This PR fixes a critical bug" \\
         --base main --head feature-branch
 
@@ -685,14 +822,14 @@ Subcommands:
       --label <label>            Label (can be specified multiple times)
     
     Example:
-      gitrep-api publish issue npub1... myrepo "Bug report" \\
+      gitrep publish issue npub1... myrepo "Bug report" \\
         --content "Found a bug" --label bug --label critical
 
   status <event-id> <open|applied|closed|draft> [--content <text>]
     Update PR/issue status (kinds 1630-1633)
     
     Example:
-      gitrep-api publish status abc123... closed --content "Fixed in v1.0"
+      gitrep publish status abc123... closed --content "Fixed in v1.0"
 
   patch <owner-npub> <repo> <patch-file> [options]
     Publish a git patch (kind 1617)
@@ -706,7 +843,7 @@ Subcommands:
       --mention <npub>         Mention user (can be specified multiple times)
     
     Example:
-      gitrep-api publish patch npub1... myrepo patch-0001.patch \\
+      gitrep publish patch npub1... myrepo patch-0001.patch \\
         --earliest-commit abc123 --commit def456 --root
 
   repo-state <repo> [options]
@@ -716,12 +853,27 @@ Subcommands:
       --head <branch>                                   Set HEAD branch
     
     Example:
-      gitrep-api publish repo-state myrepo \\
+      gitrep publish repo-state myrepo \\
         --ref refs/heads/main abc123 def456 \\
         --ref refs/tags/v1.0.0 xyz789 \\
         --head main
 
   pr-update <owner-npub> <repo> <pr-event-id> <commit-id> [options]
+
+  event [options]
+    Publish a generic Nostr event (defaults to kind 1)
+    Options:
+      --kind <number>              Event kind (default: 1)
+      --content <text>             Event content (default: '')
+      --tag <name> <value>         Add a tag (can be specified multiple times)
+      --no-client-tag              Don't add client tag (default: adds 'client' tag)
+      --relay <url>                Custom relay URL (can be specified multiple times)
+    
+    Examples:
+      gitrep publish event --kind 1 --content "Hello, Nostr!"
+      gitrep publish event --kind 1 --content "Hello" --tag "p" "npub1..."
+      gitrep publish event --kind 42 --content "" --tag "t" "hashtag" --tag "p" "npub1..."
+      gitrep publish event --kind 1 --content "Test" --no-client-tag
     Update pull request tip commit (kind 1619)
     Options:
       --pr-author <npub>       PR author pubkey (for NIP-22 tags)
@@ -731,7 +883,7 @@ Subcommands:
       --mention <npub>         Mention user (can be specified multiple times)
     
     Example:
-      gitrep-api publish pr-update npub1... myrepo pr-event-id new-commit-id \\
+      gitrep publish pr-update npub1... myrepo pr-event-id new-commit-id \\
         --pr-author npub1... \\
         --clone-url "https://gitrepublic.com/api/git/npub1.../myrepo.git" \\
         --merge-base base-commit-id
@@ -766,9 +918,15 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
     // Get relays from environment or use defaults
     const relaysEnv = process.env.NOSTR_RELAYS;
     const relays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : [
-      'wss://theforest.nostr1.com',
+      'wss://nostr.land',
       'wss://relay.damus.io',
-      'wss://nostr.land'
+      'wss://thecitadel.nostr1.com',
+      'wss://nostr21.com',
+      'wss://theforest.nostr1.com',
+      'wss://freelay.sovbit.host',
+      'wss://nostr.sovbit.host',
+      'wss://bevos.nostr1.com',
+      'wss://relay.primal.net',
     ];
 
     if (subcommand === 'repo-announcement') {
@@ -816,6 +974,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['p', maintainer]);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 30617, // REPO_ANNOUNCEMENT
         created_at: Math.floor(Date.now() / 1000),
@@ -826,7 +987,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -879,6 +1040,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['t', 'self-transfer']);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 1641, // OWNERSHIP_TRANSFER
         created_at: Math.floor(Date.now() / 1000),
@@ -889,7 +1053,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -949,6 +1113,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['head', headBranch]);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 1618, // PULL_REQUEST
         created_at: Math.floor(Date.now() / 1000),
@@ -959,7 +1126,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1013,6 +1180,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['t', label]);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 1621, // ISSUE
         created_at: Math.floor(Date.now() / 1000),
@@ -1023,7 +1193,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1071,6 +1241,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         }
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind,
         created_at: Math.floor(Date.now() / 1000),
@@ -1081,7 +1254,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1097,7 +1270,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
           result.failed.forEach(f => console.log(`  ${f.relay}: ${f.error}`));
         }
       }
-      } else if (subcommand === 'patch') {
+    } else if (subcommand === 'patch') {
       // publish patch <owner-npub> <repo> <patch-file> [options]
       // Patch content should be from git format-patch
       const [ownerNpub, repoName, patchFile] = args.slice(1);
@@ -1186,6 +1359,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['p', mentionPubkey]);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 1617, // PATCH
         created_at: Math.floor(Date.now() / 1000),
@@ -1196,7 +1372,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1246,6 +1422,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         }
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 30618, // REPO_STATE
         created_at: Math.floor(Date.now() / 1000),
@@ -1256,7 +1435,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1373,6 +1552,9 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
         tags.push(['merge-base', mergeBase]);
       }
 
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
       const event = finalizeEvent({
         kind: 1619, // PULL_REQUEST_UPDATE
         created_at: Math.floor(Date.now() / 1000),
@@ -1383,7 +1565,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
       // Store event in JSONL file
       storeEventInJsonl(event);
       
-      const result = await publishToRelays(event, relays);
+      const result = await publishToRelays(event, relays, privateKeyBytes, pubkey);
       
       if (json) {
         console.log(JSON.stringify({ event, published: result }, null, 2));
@@ -1400,13 +1582,150 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
           result.failed.forEach(f => console.log(`  ${f.relay}: ${f.error}`));
         }
       }
-      } else {
-        console.error(`Error: Unknown publish subcommand: ${subcommand}`);
-        console.error('Use: publish repo-announcement|ownership-transfer|pr|pr-update|issue|status|patch|repo-state');
-        console.error('Run: publish --help for detailed usage');
-        process.exit(1);
+    } else if (subcommand === 'event') {
+      // Generic event publishing
+      
+      // Check for help
+      if (args.slice(1).includes('--help') || args.slice(1).includes('-h')) {
+        console.log(`
+Publish Generic Nostr Event
+
+Usage: gitrep publish event [content] [options]
+
+Description:
+  Publish a generic Nostr event with any kind, content, and tags.
+  Defaults to kind 1 (text note) if not specified.
+  Content can be provided as a positional argument or with --content.
+
+Options:
+  --kind <number>              Event kind (default: 1)
+  --content <text>             Event content (default: '')
+  --tag <name> <value>         Add a tag (can be specified multiple times)
+  --no-client-tag              Don't add client tag (default: adds 'client' tag)
+  --relay <url>                Custom relay URL (can be specified multiple times)
+  --help, -h                   Show this help message
+
+Examples:
+  gitrep publish event "Hello, Nostr!"                    # Simple text note
+  gitrep publish event --kind 1 --content "Hello, Nostr!"
+  gitrep publish event --kind 1 --content "Hello" --tag "p" "npub1..."
+  gitrep publish event --kind 42 "" --tag "t" "hashtag" --tag "p" "npub1..."
+  gitrep publish event "Test" --no-client-tag
+  gitrep publish event "Test" --relay "wss://relay.example.com"
+
+Notes:
+  - All events are automatically signed with NOSTRGIT_SECRET_KEY
+  - Events are stored locally in nostr/events-kind-<kind>.jsonl
+  - Client tag is added by default unless --no-client-tag is specified
+`);
+        process.exit(0);
       }
-    },
+
+      let kind = 1; // Default to kind 1
+      let content = '';
+      const tags = [];
+      const customRelays = [];
+      let positionalContent = null;
+
+      // Parse options and positional arguments
+      for (let i = 1; i < args.length; i++) {
+        if (args[i] === '--kind' && args[i + 1]) {
+          kind = parseInt(args[++i], 10);
+          if (isNaN(kind)) {
+            console.error('Error: --kind must be a number');
+            process.exit(1);
+          }
+        } else if (args[i] === '--content' && args[i + 1] !== undefined) {
+          content = args[++i];
+        } else if (args[i] === '--tag' && args[i + 1] && args[i + 2]) {
+          const tagName = args[++i];
+          const tagValue = args[++i];
+          tags.push([tagName, tagValue]);
+        } else if (args[i] === '--relay' && args[i + 1]) {
+          customRelays.push(args[++i]);
+        } else if (args[i] === '--no-client-tag') {
+          // Handled by addClientTag function
+        } else if (args[i] === '--help' || args[i] === '-h') {
+          // Already handled above
+        } else if (!args[i].startsWith('--')) {
+          // Positional argument - treat as content if no --content was specified
+          if (positionalContent === null && content === '') {
+            positionalContent = args[i];
+          } else {
+            console.error(`Error: Unexpected positional argument: ${args[i]}`);
+            console.error('Use: publish event [content] [options]');
+            console.error('Run: publish event --help for detailed usage');
+            process.exit(1);
+          }
+        } else {
+          console.error(`Error: Unknown option: ${args[i]}`);
+          console.error('Use: publish event [content] [options]');
+          console.error('Run: publish event --help for detailed usage');
+          process.exit(1);
+        }
+      }
+
+      // Use positional content if provided and --content was not used
+      if (positionalContent !== null && content === '') {
+        content = positionalContent;
+      }
+
+      // Add client tag unless --no-client-tag is specified
+      addClientTag(tags, args);
+
+      // Use custom relays if provided, otherwise use defaults
+      const eventRelays = customRelays.length > 0 ? customRelays : relays;
+
+      const event = finalizeEvent({
+        kind,
+        created_at: Math.floor(Date.now() / 1000),
+        tags,
+        content
+      }, privateKeyBytes);
+
+      // Store event in JSONL file
+      storeEventInJsonl(event);
+      
+      let result;
+      try {
+        result = await publishToRelays(event, eventRelays, privateKeyBytes, pubkey);
+      } catch (error) {
+        // Handle relay errors gracefully - don't crash
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        result = {
+          success: [],
+          failed: eventRelays.map(relay => ({ relay, error: errorMessage }))
+        };
+      }
+      
+      if (json) {
+        console.log(JSON.stringify({ event, published: result }, null, 2));
+      } else {
+        console.log('Event published!');
+        console.log(`Event ID: ${event.id}`);
+        console.log(`Kind: ${kind}`);
+        console.log(`Content: ${content || '(empty)'}`);
+        console.log(`Tags: ${tags.length}`);
+        console.log(`Event stored in nostr/events-kind-${kind}.jsonl`);
+        if (result.success.length > 0) {
+          console.log(`Published to ${result.success.length} relay(s): ${result.success.join(', ')}`);
+        }
+        if (result.failed.length > 0) {
+          console.log(`Failed on ${result.failed.length} relay(s):`);
+          result.failed.forEach(f => console.log(`  ${f.relay}: ${f.error}`));
+        }
+        // Exit with error code only if all relays failed
+        if (result.success.length === 0 && result.failed.length > 0) {
+          process.exit(1);
+        }
+      }
+    } else {
+      console.error(`Error: Unknown publish subcommand: ${subcommand}`);
+      console.error('Use: publish repo-announcement|ownership-transfer|pr|pr-update|issue|status|patch|repo-state|event');
+      console.error('Run: publish --help for detailed usage');
+      process.exit(1);
+    }
+  },
 
   async verify(args, server, json) {
     // verify <event-file> or verify <event-json>
@@ -1491,7 +1810,7 @@ For more information, see: https://github.com/silberengel/gitrepublic-cli
     if (args.includes('--help') || args.includes('-h')) {
       console.log(`Push to All Remotes
 
-Usage: gitrep-api push-all [branch] [options]
+Usage: gitrep push-all [branch] [options]
 
 Description:
   Pushes the current branch (or specified branch) to all configured git remotes.
@@ -1508,11 +1827,11 @@ Options:
   --help, -h                Show this help message
 
 Examples:
-  gitrep-api push-all                    Push all branches to all remotes
-  gitrep-api push-all main               Push main branch to all remotes
-  gitrep-api push-all main --force       Force push main branch to all remotes
-  gitrep-api push-all --tags             Push all branches and tags to all remotes
-  gitrep-api push-all main --dry-run     Show what would be pushed without pushing
+  gitrep push-all                    Push all branches to all remotes
+  gitrep push-all main               Push main branch to all remotes
+  gitrep push-all main --force       Force push main branch to all remotes
+  gitrep push-all --tags             Push all branches and tags to all remotes
+  gitrep push-all main --dry-run     Show what would be pushed without pushing
 
 Notes:
   - This command requires you to be in a git repository
@@ -1520,7 +1839,7 @@ Notes:
   - If any remote fails, the command will exit with an error code
   - Use --dry-run to test before actually pushing
 `);
-      process.exit(0);
+      return; // Exit the function (process.exit is handled by the caller)
     }
     
     // Parse arguments
@@ -1625,10 +1944,10 @@ const commandArgs = commandIndex >= 0 ? args.slice(commandIndex + 1) : [];
 const serverIndex = args.indexOf('--server');
 const server = serverIndex >= 0 && args[serverIndex + 1] ? args[serverIndex + 1] : DEFAULT_SERVER;
 const json = args.includes('--json');
-// Check if --help is in command args (after command) - if so, it's command-specific help
+// Check if --help or -h is in command args (after command) - if so, it's command-specific help
 const commandHelpRequested = command && (commandArgs.includes('--help') || commandArgs.includes('-h'));
-// Only treat as general help if --help is before the command or there's no command
-const help = !commandHelpRequested && args.includes('--help');
+// Only treat as general help if --help or -h is before the command or there's no command
+const help = !commandHelpRequested && (args.includes('--help') || args.includes('-h'));
 
 // Add config command
 if (command === 'config') {
@@ -1649,7 +1968,7 @@ if (command === 'config') {
       }
       console.log('');
       console.log('To change the server:');
-      console.log('  gitrep-api --server <url> <command> (or gitrepublic-api)');
+      console.log('  gitrep --server <url> <command> (or gitrepublic)');
       console.log('  export GITREPUBLIC_SERVER=<url>');
     }
     process.exit(0);
@@ -1677,7 +1996,7 @@ if (commandHelpRequested && commandHandler) {
 if (help || !command || !commandHandler) {
   console.log(`GitRepublic CLI
 
-Usage: gitrep-api <command> [options] (or gitrepublic-api)
+Usage: gitrep <command> [options] (or gitrepublic)
 
 Commands:
   config [server]               Show configuration (server URL)

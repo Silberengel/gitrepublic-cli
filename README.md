@@ -16,9 +16,14 @@ export NOSTRGIT_SECRET_KEY="nsec1..."
 # Setup (configures credential helper and commit hook)
 gitrep-setup
 
-# Use gitrepublic (or gitrep) as a drop-in replacement for git
+# Use gitrepublic (or gitrep) for git operations
 gitrep clone https://your-domain.com/api/git/npub1.../repo.git gitrepublic-web
 gitrep push gitrepublic-web main
+
+# Use gitrep for API commands too
+gitrep push-all main              # Push to all remotes
+gitrep repos list                 # List repositories
+gitrep publish repo-announcement myrepo
 
 # Note: "gitrep" is a shorter alias for "gitrepublic" - both work the same way.
 # We suggest using "gitrepublic-web" as the remote name instead of "origin"
@@ -27,10 +32,13 @@ gitrep push gitrepublic-web main
 
 ## Commands
 
-- **`gitrepublic`** or **`gitrep`** - Git wrapper with enhanced error messages (use instead of `git`)
-- **`gitrepublic-api`** or **`gitrep-api`** - Access GitRepublic APIs from command line
+- **`gitrepublic`** or **`gitrep`** - Unified command for both git operations and API access
+  - Git commands: `gitrep clone`, `gitrep push`, `gitrep pull`, etc.
+  - API commands: `gitrep push-all`, `gitrep repos list`, `gitrep publish`, etc.
 - **`gitrepublic-setup`** or **`gitrep-setup`** - Automatic setup script
 - **`gitrepublic-uninstall`** or **`gitrep-uninstall`** - Remove all configuration
+
+> **Note**: `gitrep-api` and `gitrepublic-api` are still available for backward compatibility but are now aliases to `gitrep`/`gitrepublic`.
 
 Run any command with `--help` or `-h` for detailed usage information.
 
@@ -94,8 +102,10 @@ export NOSTR_RELAYS="wss://relay1.com,wss://relay2.com"  # Optional, has default
 ## Documentation
 
 For detailed documentation, run:
-- `gitrep --help` or `gitrepublic --help` - Git wrapper usage
-- `gitrep-api --help` or `gitrepublic-api --help` - API commands
+- `gitrep --help` or `gitrepublic --help` - General help and git commands
+- `gitrep push-all --help` - Push to all remotes
+- `gitrep repos --help` - Repository management
+- `gitrep publish --help` - Publish Nostr events
 - `gitrep-setup --help` or `gitrepublic-setup --help` - Setup options
 - `gitrep-uninstall --help` or `gitrepublic-uninstall --help` - Uninstall options
 
