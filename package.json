@@ -1,0 +1,61 @@
+{
+  "name": "gitrepublic-cli",
+  "version": "1.0.0",
+  "description": "Command-line tools for GitRepublic: git wrapper with enhanced error messages, credential helper, commit signing hook, and API access",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "gitrepublic": "./scripts/git-wrapper.js",
+    "gitrep": "./scripts/git-wrapper.js",
+    "gitrepublic-api": "./scripts/gitrepublic.js",
+    "gitrep-api": "./scripts/gitrepublic.js",
+    "gitrepublic-credential": "./scripts/git-credential-nostr.js",
+    "gitrep-cred": "./scripts/git-credential-nostr.js",
+    "gitrepublic-commit-hook": "./scripts/git-commit-msg-hook.js",
+    "gitrep-commit": "./scripts/git-commit-msg-hook.js",
+    "gitrepublic-path": "./scripts/get-path.js",
+    "gitrep-path": "./scripts/get-path.js",
+    "gitrepublic-setup": "./scripts/setup.js",
+    "gitrep-setup": "./scripts/setup.js",
+    "gitrepublic-uninstall": "./scripts/uninstall.js",
+    "gitrep-uninstall": "./scripts/uninstall.js"
+  },
+  "files": [
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "chmod +x scripts/*.js && node scripts/postinstall.js"
+  },
+  "keywords": [
+    "git",
+    "nostr",
+    "gitrepublic",
+    "credential-helper",
+    "commit-signing",
+    "nip-98"
+  ],
+  "author": "GitCitadel LLC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://git.imwald.eu/silberengel/gitrepublic-cli.git"
+  },
+  "repositories": [
+    {
+      "type": "git",
+      "url": "https://github.com/silberengel/gitrepublic-cli.git"
+    },
+    {
+      "type": "git",
+      "url": "https://git.imwald.eu/silberengel/gitrepublic-cli.git"
+    }
+  ],
+  "dependencies": {
+    "nostr-tools": "^2.22.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
