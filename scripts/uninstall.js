@@ -5,7 +5,7 @@
  * Removes all GitRepublic CLI configuration from your system
  */
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { existsSync, unlinkSync, rmdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -96,23 +96,28 @@ function main() {
   // Remove credential helper configurations
   console.log('Removing git credential helper configurations...');
   try {
-    const credentialConfigs = execSync('git config --global --get-regexp credential.*helper', { encoding: 'utf-8' })
-      .split('\n')
-      .filter(line => line.trim() && line.includes('gitrepublic') || line.includes('git-credential-nostr'));
-    
-    for (const config of credentialConfigs) {
-      if (config.trim()) {
-        const key = config.split(' ')[0];
-        if (key) {
-          console.log(`  - ${key}`);
-          if (!dryRun) {
-            try {
-              execSync(`git config --global --unset "${key}"`, { stdio: 'ignore' });
-            } catch {
-              // Ignore if already removed
+    // Security: Use spawnSync with argument arrays
+    const result = spawnSync('git', ['config', '--global', '--get-regexp', 'credential.*helper'], { encoding: 'utf-8' });
+    if (result.status === 0) {
+      const credentialConfigs = result.stdout
+        .split('\n')
+        .filter(line => line.trim() && (line.includes('gitrepublic') || line.includes('git-credential-nostr')));
+      
+      for (const config of credentialConfigs) {
+        if (config.trim()) {
+          const key = config.split(' ')[0];
+          if (key) {
+            console.log(`  - ${key}`);
+            if (!dryRun) {
+              try {
+                // Security: Use spawnSync with argument arrays
+                spawnSync('git', ['config', '--global', '--unset', key], { stdio: 'ignore' });
+              } catch {
+                // Ignore if already removed
+              }
             }
+            removed++;
           }
-          removed++;
         }
       }
     }
@@ -123,7 +128,9 @@ function main() {
   // Remove commit hook (global)
   console.log('\nRemoving global commit hook...');
   try {
-    const hooksPath = execSync('git config --global --get core.hooksPath', { encoding: 'utf-8' }).trim();
+    // Security: Use spawnSync with argument arrays
+    const result = spawnSync('git', ['config', '--global', '--get', 'core.hooksPath'], { encoding: 'utf-8' });
+    const hooksPath = result.status === 0 ? result.stdout.trim() : null;
     if (hooksPath) {
       const hookFile = join(hooksPath, 'commit-msg');
       if (existsSync(hookFile)) {
@@ -147,7 +154,8 @@ function main() {
     
     // Remove core.hooksPath config
     try {
-      execSync('git config --global --unset core.hooksPath', { stdio: 'ignore' });
+      // Security: Use spawnSync with argument arrays
+      spawnSync('git', ['config', '--global', '--unset', 'core.hooksPath'], { stdio: 'ignore' });
       if (!dryRun) {
         console.log('  - Removed core.hooksPath configuration');
       }

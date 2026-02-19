@@ -1,9 +1,9 @@
-import { writeFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 
 /**
  * Store event in appropriate JSONL file based on event kind
+ * Security: Uses fs.mkdirSync instead of execSync to prevent command injection
  */
 export function storeEventInJsonl(event) {
   try {
@@ -28,9 +28,10 @@ export function storeEventInJsonl(event) {
     }
     
     // Create nostr/ directory if it doesn't exist
+    // Security: Use fs.mkdirSync instead of execSync for path safety
     const nostrDir = join(repoRoot, 'nostr');
     if (!existsSync(nostrDir)) {
-      execSync(`mkdir -p "${nostrDir}"`, { stdio: 'ignore' });
+      mkdirSync(nostrDir, { recursive: true });
     }
     
     // Determine JSONL file name based on event kind

@@ -21,7 +21,7 @@
  *   gitrep publish <subcommand>
  */
 
-import { spawn, execSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import { finalizeEvent } from 'nostr-tools';
 import { decode } from 'nostr-tools/nip19';
@@ -51,10 +51,17 @@ const API_COMMANDS = [
 ];
 
 // Get git remote URL
+// Security: Validates remote name to prevent command injection
 function getRemoteUrl(remote = 'origin') {
   try {
-    const url = execSync(`git config --get remote.${remote}.url`, { encoding: 'utf-8' }).trim();
-    return url;
+    // Validate remote name to prevent injection
+    if (!remote || typeof remote !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(remote)) {
+      return null;
+    }
+    // Security: Use spawnSync with argument array instead of string concatenation
+    const result = spawnSync('git', ['config', '--get', `remote.${remote}.url`], { encoding: 'utf-8' });
+    if (result.status !== 0) return null;
+    return result.stdout.trim();
   } catch {
     return null;
   }

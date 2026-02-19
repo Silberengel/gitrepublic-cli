@@ -33,8 +33,8 @@
 import { finalizeEvent, getPublicKey, nip19 } from 'nostr-tools';
 import { publishToRelays } from './relay/publisher.js';
 import { enhanceRelayList } from './relay/relay-fetcher.js';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
 
 // Commit signature event kind (1640)
@@ -76,10 +76,18 @@ function decodeNostrKey(key) {
 
 /**
  * Get git config value
+ * Security: Validates key to prevent command injection
  */
 function getGitConfig(key) {
   try {
-    return execSync(`git config --get ${key}`, { encoding: 'utf-8' }).trim() || null;
+    // Validate key to prevent injection (git config keys are alphanumeric with dots and hyphens)
+    if (!key || typeof key !== 'string' || !/^[a-zA-Z0-9.-]+$/.test(key)) {
+      return null;
+    }
+    // Security: Use spawnSync with argument array instead of string concatenation
+    const result = spawnSync('git', ['config', '--get', key], { encoding: 'utf-8' });
+    if (result.status !== 0) return null;
+    return result.stdout.trim() || null;
   } catch {
     return null;
   }
@@ -94,8 +102,10 @@ function getGitConfig(key) {
 function isGitRepublicRepo() {
   try {
     // Get all remotes
-    const remotes = execSync('git remote -v', { encoding: 'utf-8' });
-    const remoteLines = remotes.split('\n').filter(line => line.trim());
+    // Security: Use spawnSync with argument arrays
+    const result = spawnSync('git', ['remote', '-v'], { encoding: 'utf-8' });
+    if (result.status !== 0) return false;
+    const remoteLines = result.stdout.split('\n').filter(line => line.trim());
     
     // Check if any remote URL matches GitRepublic patterns
     // GitRepublic URLs use specific path patterns to distinguish from GRASP:
@@ -303,7 +313,8 @@ async function signCommitMessage(commitMessageFile) {
         // Store in nostr/ folder in repository root
         const nostrDir = join(repoRoot, 'nostr');
         if (!existsSync(nostrDir)) {
-          execSync(`mkdir -p "${nostrDir}"`, { stdio: 'ignore' });
+          // Security: Use fs.mkdirSync instead of execSync for path safety
+          mkdirSync(nostrDir, { recursive: true });
         }
         
         // Append to commit-signatures.jsonl (JSON Lines format)

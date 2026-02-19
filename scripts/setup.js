@@ -16,8 +16,8 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { existsSync, mkdirSync, unlinkSync, symlinkSync } from 'fs';
+import { spawnSync } from 'child_process';
 
 // Get the directory where this script is located
 const __filename = fileURLToPath(import.meta.url);
@@ -108,19 +108,25 @@ function setupCredentialHelper() {
   try {
     let configCommand;
     
+    // Security: Use spawnSync with argument arrays to prevent command injection
     if (domain) {
       // Configure for specific domain
+      // Validate domain to prevent injection
       const protocol = domain.startsWith('https://') ? 'https' : domain.startsWith('http://') ? 'http' : 'https';
       const host = domain.replace(/^https?:\/\//, '').split('/')[0];
-      configCommand = `git config --global credential.${protocol}://${host}.helper '!node ${credentialScript}'`;
+      // Validate host format (basic check)
+      if (!/^[a-zA-Z0-9.-]+$/.test(host)) {
+        throw new Error('Invalid domain format');
+      }
+      const configKey = `credential.${protocol}://${host}.helper`;
+      const configValue = `!node ${credentialScript}`;
+      spawnSync('git', ['config', '--global', configKey, configValue], { stdio: 'inherit' });
       console.log(`   Configuring for domain: ${host}`);
     } else {
       // Configure globally for all domains
-      configCommand = `git config --global credential.helper '!node ${credentialScript}'`;
+      spawnSync('git', ['config', '--global', 'credential.helper', `!node ${credentialScript}`], { stdio: 'inherit' });
       console.log('   Configuring globally for all domains');
     }
-    
-    execSync(configCommand, { stdio: 'inherit' });
     console.log('✅ Credential helper configured successfully!\n');
   } catch (error) {
     console.error('❌ Failed to configure credential helper:', error.message);
@@ -138,21 +144,24 @@ function setupCommitHook() {
       const hooksDir = resolve(process.env.HOME, '.git-hooks');
       
       // Create hooks directory if it doesn't exist
+      // Security: Use fs.mkdirSync instead of execSync
       if (!existsSync(hooksDir)) {
-        execSync(`mkdir -p "${hooksDir}"`, { stdio: 'inherit' });
+        mkdirSync(hooksDir, { recursive: true });
       }
       
       // Create symlink
       const hookPath = join(hooksDir, 'commit-msg');
       if (existsSync(hookPath)) {
         console.log('   Removing existing hook...');
-        execSync(`rm "${hookPath}"`, { stdio: 'inherit' });
+        unlinkSync(hookPath);
       }
       
-      execSync(`ln -s "${commitHookScript}" "${hookPath}"`, { stdio: 'inherit' });
+      // Security: Use fs.symlinkSync instead of execSync
+      symlinkSync(commitHookScript, hookPath);
       
       // Configure git to use global hooks
-      execSync('git config --global core.hooksPath ~/.git-hooks', { stdio: 'inherit' });
+      // Note: Using ~/.git-hooks is safe as it's a literal string, not user input
+      spawnSync('git', ['config', '--global', 'core.hooksPath', '~/.git-hooks'], { stdio: 'inherit' });
       
       console.log('✅ Commit hook installed globally for all repositories!\n');
     } else {
@@ -166,18 +175,20 @@ function setupCommitHook() {
       const hookPath = join(gitDir, 'hooks', 'commit-msg');
       
       // Create hooks directory if it doesn't exist
+      // Security: Use fs.mkdirSync instead of execSync
       const hooksDir = join(gitDir, 'hooks');
       if (!existsSync(hooksDir)) {
-        execSync(`mkdir -p "${hooksDir}"`, { stdio: 'inherit' });
+        mkdirSync(hooksDir, { recursive: true });
       }
       
       // Create symlink
+      // Security: Use fs operations instead of execSync
       if (existsSync(hookPath)) {
         console.log('   Removing existing hook...');
-        execSync(`rm "${hookPath}"`, { stdio: 'inherit' });
+        unlinkSync(hookPath);
       }
       
-      execSync(`ln -s "${commitHookScript}" "${hookPath}"`, { stdio: 'inherit' });
+      symlinkSync(commitHookScript, hookPath);
       
       console.log('✅ Commit hook installed for current repository!\n');
     }
@@ -235,3 +246,4 @@ if (!secretKey) {
 }
 console.log('2. Test credential helper: gitrep clone <gitrepublic-repo-url> gitrepublic-web');
 console.log('3. Test commit signing: gitrep commit -m "Test commit"');
+

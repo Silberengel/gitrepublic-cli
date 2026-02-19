@@ -1,7 +1,8 @@
-import { execSync } from 'child_process';
+// Note: Using spawn instead of execSync for security (prevents command injection)
 
 /**
  * Push to all remotes
+ * Security: Uses spawn with argument arrays to prevent command injection
  */
 export async function pushAll(args, server, json) {
   // Check for help flag
@@ -47,9 +48,20 @@ Notes:
   const dryRun = args.includes('--dry-run') || args.includes('-n');
   
   // Get all remotes
+  // Security: Use spawn with argument arrays to prevent command injection
   let remotes = [];
   try {
-    const remoteOutput = execSync('git remote', { encoding: 'utf-8' }).trim();
+    const { spawn } = await import('child_process');
+    const remoteOutput = await new Promise((resolve, reject) => {
+      const proc = spawn('git', ['remote'], { encoding: 'utf-8' });
+      let output = '';
+      proc.stdout.on('data', (chunk) => { output += chunk.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) resolve(output.trim());
+        else reject(new Error(`git remote exited with code ${code}`));
+      });
+      proc.on('error', reject);
+    });
     remotes = remoteOutput.split('\n').filter(r => r.trim());
   } catch (err) {
     console.error('Error: Not in a git repository or unable to read remotes');
@@ -85,11 +97,20 @@ Notes:
         console.log(`\nPushing to ${remote}...`);
       }
       
+      // Security: Use spawn with argument arrays to prevent command injection
+      const { spawn } = await import('child_process');
       const command = ['push', remote, ...pushArgs];
       
-      execSync(`git ${command.join(' ')}`, {
-        stdio: json ? 'pipe' : 'inherit',
-        encoding: 'utf-8'
+      await new Promise((resolve, reject) => {
+        const proc = spawn('git', command, {
+          stdio: json ? 'pipe' : 'inherit',
+          encoding: 'utf-8'
+        });
+        proc.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`git push exited with code ${code}`));
+        });
+        proc.on('error', reject);
       });
       
       results.push({ remote, status: 'success' });
