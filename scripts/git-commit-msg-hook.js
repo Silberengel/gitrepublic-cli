@@ -30,7 +30,9 @@
  * Security: Keep your NOSTRGIT_SECRET_KEY secure and never commit it to version control!
  */
 
-import { finalizeEvent, getPublicKey, SimplePool, nip19 } from 'nostr-tools';
+import { finalizeEvent, getPublicKey, nip19 } from 'nostr-tools';
+import { publishToRelays } from './relay/publisher.js';
+import { enhanceRelayList } from './relay/relay-fetcher.js';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, dirname, resolve } from 'path';
@@ -336,7 +338,7 @@ async function signCommitMessage(commitMessageFile) {
     if (publishEvent) {
       try {
         const relaysEnv = process.env.NOSTR_RELAYS;
-        const relays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : [
+        const baseRelays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : [
           'wss://nostr.land',
           'wss://relay.damus.io',
           'wss://thecitadel.nostr1.com',
@@ -346,17 +348,23 @@ async function signCommitMessage(commitMessageFile) {
           'wss://nostr.sovbit.host',
           'wss://bevos.nostr1.com',
           'wss://relay.primal.net',
+          'wss://nostr.mom',
         ];
         
-        const pool = new SimplePool();
-        const results = await pool.publish(relays, signedEvent);
-        pool.close(relays);
+        // Enhance relay list with user's relay preferences (outboxes, local relays, blocked relays)
+        const relays = await enhanceRelayList(baseRelays, pubkey, baseRelays);
         
-        const successCount = results.size;
-        if (successCount > 0) {
-          console.log(`   Published to ${successCount} relay(s)`);
+        const result = await publishToRelays(signedEvent, relays, keyBytes, pubkey);
+        
+        if (result.success.length > 0) {
+          console.log(`   Published to ${result.success.length} relay(s)`);
         } else {
           console.log('   ⚠️  Failed to publish to relays');
+          if (result.failed.length > 0) {
+            result.failed.forEach(f => {
+              console.log(`   ⚠️  ${f.relay}: ${f.error}`);
+            });
+          }
         }
       } catch (publishError) {
         console.log(`   ⚠️  Failed to publish event: ${publishError instanceof Error ? publishError.message : 'Unknown error'}`);
