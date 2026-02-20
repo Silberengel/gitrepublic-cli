@@ -1,6 +1,6 @@
 import { getPrivateKeyFromEnv, getPrivateKeyBytes } from '../../utils/keys.js';
 import { getPublicKey } from 'nostr-tools';
-import { DEFAULT_RELAYS } from '../../config.js';
+import { DEFAULT_NOSTR_RELAYS } from '../../config.js';
 import { publishToRelays } from '../../relay/publisher.js';
 import { enhanceRelayList } from '../../relay/relay-fetcher.js';
 import { storeEventInJsonl } from '../../utils/event-storage.js';
@@ -35,7 +35,7 @@ export async function publish(args, server, json) {
 
   // Get relays from environment or use defaults
   const relaysEnv = process.env.NOSTR_RELAYS;
-  const baseRelays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : DEFAULT_RELAYS;
+  const baseRelays = relaysEnv ? relaysEnv.split(',').map(r => r.trim()).filter(r => r.length > 0) : DEFAULT_NOSTR_RELAYS;
   
   // Enhance relay list with user's relay preferences (outboxes, local relays, blocked relays)
   const relays = await enhanceRelayList(baseRelays, pubkey, baseRelays);

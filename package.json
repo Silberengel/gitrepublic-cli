@@ -40,18 +40,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://git.imwald.eu/silberengel/gitrepublic-cli.git"
+    "url": "https://github.com/silberengel/gitrepublic-cli.git"
   },
-  "repositories": [
-    {
-      "type": "git",
-      "url": "https://github.com/silberengel/gitrepublic-cli.git"
-    },
-    {
-      "type": "git",
-      "url": "https://git.imwald.eu/silberengel/gitrepublic-cli.git"
-    }
-  ],
   "dependencies": {
     "nostr-tools": "^2.22.1"
   },

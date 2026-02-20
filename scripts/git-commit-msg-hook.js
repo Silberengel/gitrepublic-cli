@@ -245,19 +245,49 @@ async function signCommitMessage(commitMessageFile) {
     const keyBytes = decodeNostrKey(secretKey);
     const pubkey = getPublicKey(keyBytes);
     
-    // Get author info from git config, fallback to shortened npub
+    // Get author info from git config, then try to fetch from kind 0 event, fallback to shortened npub
     let authorName = getGitConfig('user.name');
     let authorEmail = getGitConfig('user.email');
     
+    // If not set in git config, try to fetch from kind 0 event
     if (!authorName || !authorEmail) {
-      const shortenedNpub = getShortenedNpub(pubkey);
-      
-      if (!authorName) {
-        authorName = shortenedNpub;
-      }
-      
-      if (!authorEmail) {
-        authorEmail = `${shortenedNpub}@gitrepublic.web`;
+      try {
+        const { fetchProfileFromRelays } = await import('./relay/profile-fetcher.js');
+        const profile = await fetchProfileFromRelays(pubkey);
+        
+        if (!authorName) {
+          // Try display_name -> name -> shortened npub (20 chars)
+          if (profile?.displayName) {
+            authorName = profile.displayName;
+          } else if (profile?.name) {
+            authorName = profile.name;
+          } else {
+            const npub = nip19.npubEncode(pubkey);
+            authorName = npub.substring(0, 20);
+          }
+        }
+        
+        if (!authorEmail) {
+          // Try NIP-05 -> shortenednpub@gitrepublic.web
+          if (profile?.nip05) {
+            authorEmail = profile.nip05;
+          } else {
+            const npub = nip19.npubEncode(pubkey);
+            authorEmail = `${npub.substring(0, 20)}@gitrepublic.web`;
+          }
+        }
+      } catch (profileError) {
+        // Fallback to shortened npub if profile fetch fails
+        console.warn('   ⚠️  Failed to fetch profile from relays, using fallback:', profileError instanceof Error ? profileError.message : 'Unknown error');
+        const shortenedNpub = getShortenedNpub(pubkey);
+        
+        if (!authorName) {
+          authorName = shortenedNpub;
+        }
+        
+        if (!authorEmail) {
+          authorEmail = `${shortenedNpub}@gitrepublic.web`;
+        }
       }
     }
     

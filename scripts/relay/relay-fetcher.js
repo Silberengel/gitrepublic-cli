@@ -1,5 +1,5 @@
 import { SimplePool } from 'nostr-tools';
-import { DEFAULT_RELAYS } from '../config.js';
+import { DEFAULT_NOSTR_RELAYS } from '../config.js';
 
 /**
  * Normalize a relay URL (similar to nostr-tools normalizeURL but simpler)
@@ -75,7 +75,7 @@ function extractRelayUrls(event) {
  */
 export async function fetchRelayLists(pubkey, queryRelays = null) {
   const pool = new SimplePool();
-  const relays = queryRelays || DEFAULT_RELAYS;
+  const relays = queryRelays || DEFAULT_NOSTR_RELAYS;
   
   const outboxes = [];
   const localRelays = [];
