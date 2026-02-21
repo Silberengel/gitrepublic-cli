@@ -61,6 +61,9 @@ gitrep-uninstall --keep-env
 - **Credential Helper**: Automatic NIP-98 authentication
 - **Commit Signing**: Automatically sign commits for GitRepublic repos
 - **API Access**: Full command-line access to all GitRepublic APIs
+- **Profile Fetching**: Fetch user profiles with payment targets (NIP-A3 kind 10133)
+  - Automatically merges lightning addresses from NIP-01 (lud16) and kind 10133
+  - Returns payment targets in `payto://` format
 
 ## Requirements
 
