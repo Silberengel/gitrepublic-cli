@@ -42,6 +42,7 @@ const REMOTE_COMMANDS = ['clone', 'push', 'pull', 'fetch', 'ls-remote'];
 // API commands that should be handled by gitrepublic.js
 const API_COMMANDS = [
   'push-all', 'pushAll',
+  'pull-all', 'pullAll',
   'repos', 'repo',
   'file',
   'search',

@@ -18,32 +18,87 @@ async function getRemoteUrl(remote) {
 }
 
 /**
+ * Check if a URL is an SSH URL (git@host:path or ssh://)
+ */
+function isSshUrl(url) {
+  return url.startsWith('git@') || url.startsWith('ssh://') || /^[a-zA-Z0-9_]+@/.test(url);
+}
+
+/**
+ * Convert SSH URL to HTTPS URL for reachability testing
+ * Examples:
+ *   git@github.com:user/repo.git -> https://github.com/user/repo.git
+ *   git@git.imwald.eu:2222/user/repo.git -> https://git.imwald.eu/user/repo.git
+ *   ssh://git@host:port/path -> https://host/path
+ */
+function sshToHttps(url) {
+  // Handle ssh:// URLs
+  if (url.startsWith('ssh://')) {
+    const match = url.match(/^ssh:\/\/(?:[^@]+@)?([^:\/]+)(?::(\d+))?(?:\/(.+))?$/);
+    if (match) {
+      const [, host, port, path] = match;
+      const cleanPath = path || '';
+      // Remove port from HTTPS URL (ports are usually SSH-specific)
+      return `https://${host}${cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath}`;
+    }
+  }
+  
+  // Handle git@host:path format
+  if (url.startsWith('git@') || /^[a-zA-Z0-9_]+@/.test(url)) {
+    const match = url.match(/^(?:[^@]+@)?([^:]+):(.+)$/);
+    if (match) {
+      const [, host, path] = match;
+      // Remove port if present (e.g., git.imwald.eu:2222 -> git.imwald.eu)
+      const hostWithoutPort = host.split(':')[0];
+      const cleanPath = path.startsWith('/') ? path : '/' + path;
+      return `https://${hostWithoutPort}${cleanPath}`;
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Check if a git URL is reachable
  * Tests the info/refs endpoint to see if the server responds
+ * Converts SSH URLs to HTTPS for testing
  */
 async function checkUrlReachability(url, timeout = 5000) {
-  try {
-    // Handle SSH URLs (git@host:path or ssh://git@host/path)
-    if (url.startsWith('git@') || url.startsWith('ssh://')) {
-      // For SSH URLs, we can't easily test reachability via HTTP
-      // Assume reachable (user has SSH access configured)
+  let testUrl = url;
+  
+  // Convert SSH URLs to HTTPS for testing
+  if (isSshUrl(url)) {
+    const httpsUrl = sshToHttps(url);
+    if (httpsUrl) {
+      testUrl = httpsUrl;
+    } else {
+      // If we can't convert, assume reachable (will fail on actual fetch if not)
       return { reachable: true, error: undefined };
     }
-    
+  }
+  
+  try {
     // Parse URL and construct test endpoint
-    let testUrl = url;
+    let finalTestUrl = testUrl;
     
     // Handle git:// URLs
-    if (url.startsWith('git://')) {
-      testUrl = url.replace('git://', 'http://');
+    if (finalTestUrl.startsWith('git://')) {
+      finalTestUrl = finalTestUrl.replace('git://', 'http://');
     }
     
     // Ensure URL ends with .git for the test
-    if (!testUrl.endsWith('.git')) {
-      testUrl = testUrl.replace(/\/$/, '') + '.git';
+    if (!finalTestUrl.endsWith('.git')) {
+      finalTestUrl = finalTestUrl.replace(/\/$/, '') + '.git';
     }
     
-    const urlObj = new URL(testUrl);
+    const urlObj = new URL(finalTestUrl);
+    
+    // Only test HTTP/HTTPS URLs
+    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+      // For other protocols, assume reachable
+      return { reachable: true, error: undefined };
+    }
+    
     const testEndpoint = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}/info/refs?service=git-upload-pack`;
     
     const controller = new AbortController();
@@ -70,6 +125,11 @@ async function checkUrlReachability(url, timeout = 5000) {
       return { reachable: false, error: fetchError instanceof Error ? fetchError.message : 'Network error' };
     }
   } catch (urlError) {
+    // If URL parsing fails, it might be a malformed URL
+    // For SSH URLs that we couldn't convert, assume reachable (will fail on actual fetch if not)
+    if (isSshUrl(url)) {
+      return { reachable: true, error: undefined };
+    }
     return { reachable: false, error: urlError instanceof Error ? urlError.message : 'Invalid URL' };
   }
 }
