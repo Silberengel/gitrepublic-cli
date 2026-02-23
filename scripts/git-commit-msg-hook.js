@@ -390,6 +390,8 @@ async function signCommitMessage(commitMessageFile) {
           'wss://bevos.nostr1.com',
           'wss://relay.primal.net',
           'wss://nostr.mom',
+          'wss://relay.snort.social',
+          'wss://aggr.nostr.land',
         ];
         
         // Enhance relay list with user's relay preferences (outboxes, local relays, blocked relays)

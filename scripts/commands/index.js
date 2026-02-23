@@ -5,3 +5,4 @@ export { search } from './search.js';
 export { publish } from './publish/index.js';
 export { verify } from './verify.js';
 export { pushAll } from './pushAll.js';
+export { pullAll } from './pullAll.js';

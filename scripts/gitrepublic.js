@@ -105,7 +105,7 @@ Usage: gitrep <command> [options] (or gitrepublic)
 Commands:
   config [server]               Show configuration (server URL)
   repos list                    List repositories
-  repos get <npub> <repo>       Get repository info (or use naddr: repos get <naddr>)
+  repos get <npub> <repo>       Get repository info with clone URL reachability (or use naddr: repos get <naddr>)
   repos settings <npub> <repo> [--description <text>] [--private <true|false>]  Get/update settings
   repos maintainers <npub> <repo> [add|remove <npub>]  Manage maintainers
   repos branches <npub> <repo>  List branches
@@ -119,6 +119,7 @@ Commands:
   publish <subcommand> [options]  Publish Nostr Git events (use: publish --help for details)
   verify <event-file>|<event-json>  Verify a Nostr event signature and ID
   push-all [branch] [--force] [--tags] [--dry-run]  Push to all configured remotes
+  pull-all [branch] [--merge] [--rebase]             Fetch from all remotes and optionally merge/rebase changes
 
 Options:
   --server <url>                GitRepublic server URL (default: ${DEFAULT_SERVER})

@@ -30,11 +30,16 @@ export const DEFAULT_NOSTR_SEARCH_RELAYS =
   typeof process !== 'undefined' && process.env?.NOSTR_SEARCH_RELAYS
     ? process.env.NOSTR_SEARCH_RELAYS.split(',').map(r => r.trim()).filter(r => r.length > 0)
     : [
-      'wss://theforest.nostr1.com',
       'wss://nostr.land',
       'wss://relay.damus.io',
       'wss://thecitadel.nostr1.com',
       'wss://nostr21.com',
+      'wss://theforest.nostr1.com',
+      'wss://freelay.sovbit.host',
+      'wss://nostr.sovbit.host',
+      'wss://bevos.nostr1.com',
       'wss://relay.primal.net',
-      
+      'wss://nostr.mom',
+      'wss://relay.snort.social',
+      'wss://aggr.nostr.land',
       ];

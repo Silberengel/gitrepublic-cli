@@ -184,13 +184,40 @@ export async function repos(args, server, json) {
     }
     
     const data = await apiRequest(server, `/repos/${npub}/${repo}/settings`, 'GET');
+    
+    // Fetch clone URL reachability information
+    let cloneUrlReachability = null;
+    try {
+      const reachabilityData = await apiRequest(server, `/repos/${npub}/${repo}/clone-urls/reachability`, 'GET');
+      if (reachabilityData.results && Array.isArray(reachabilityData.results)) {
+        cloneUrlReachability = reachabilityData.results;
+      }
+    } catch (err) {
+      // Silently fail - reachability endpoint might not be available or might fail
+      // This is optional information
+    }
+    
     if (json) {
-      console.log(JSON.stringify(data, null, 2));
+      const output = { ...data };
+      if (cloneUrlReachability) {
+        output.cloneUrls = cloneUrlReachability;
+      }
+      console.log(JSON.stringify(output, null, 2));
     } else {
       console.log(`Repository: ${npub}/${repo}`);
       console.log(`Description: ${data.description || 'No description'}`);
       console.log(`Private: ${data.private ? 'Yes' : 'No'}`);
       console.log(`Owner: ${data.owner || npub}`);
+      
+      if (cloneUrlReachability && cloneUrlReachability.length > 0) {
+        console.log('\nClone URLs:');
+        for (const result of cloneUrlReachability) {
+          const status = result.reachable ? '✅' : '❌';
+          const serverType = result.serverType === 'grasp' ? ' (GRASP)' : result.serverType === 'git' ? ' (Git)' : '';
+          const error = result.error ? ` - ${result.error}` : '';
+          console.log(`  ${status} ${result.url}${serverType}${error}`);
+        }
+      }
     }
   } else if (subcommand === 'settings' && args[1] && args[2]) {
     const [npub, repo] = args.slice(1);
