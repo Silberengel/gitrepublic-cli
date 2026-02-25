@@ -295,8 +295,19 @@ async function signCommitMessage(commitMessageFile) {
     const timestamp = Math.floor(Date.now() / 1000);
     
     // Create a commit signature event template
-    // Note: We don't have the commit hash yet, so we'll sign without it
-    // The signature is still valid as it signs the commit message
+    // 
+    // IMPORTANT: We cannot include the commit hash in the event because:
+    // 1. The commit-msg hook runs BEFORE the commit is created, so the hash doesn't exist yet
+    // 2. Nostr events are immutable - once created and signed, they cannot be changed
+    //    (changing tags would change the event ID and invalidate the signature)
+    // 
+    // The signature is still valid as it proves:
+    // - The commit message was signed by the author
+    // - The author's identity (pubkey)
+    // - The timestamp of signing
+    // 
+    // Verification can match events to commits by comparing the commit message
+    // in the event's 'message' tag with the actual commit message.
     const eventTemplate = {
       kind: KIND_COMMIT_SIGNATURE,
       pubkey,
@@ -304,6 +315,7 @@ async function signCommitMessage(commitMessageFile) {
       tags: [
         ['author', authorName, authorEmail],
         ['message', commitMessage]
+        // Note: 'commit' tag is intentionally omitted - see comment above
       ],
       content: `Signed commit: ${commitMessage}`
     };

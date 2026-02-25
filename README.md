@@ -77,6 +77,13 @@ gitrep-uninstall --keep-env
 
 The commit hook automatically signs **all commits** by default (GitHub, GitLab, GitRepublic, etc.). The signature is just text in the commit message and doesn't interfere with git operations.
 
+**Note:** Commit signature events do not include the commit hash tag because:
+- The commit-msg hook runs **before** the commit is created, so the hash doesn't exist yet
+- Nostr events are **immutable** - once created and signed, they cannot be changed
+  (changing tags would change the event ID and invalidate the signature)
+
+Verification matches events to commits by comparing the commit message in the event's `message` tag with the actual commit message. This is secure because the signature proves the message was signed by the author.
+
 To only sign GitRepublic repositories (skip GitHub/GitLab):
 
 ```bash
