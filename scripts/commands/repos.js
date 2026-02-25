@@ -206,7 +206,15 @@ export async function repos(args, server, json) {
     } else {
       console.log(`Repository: ${npub}/${repo}`);
       console.log(`Description: ${data.description || 'No description'}`);
-      console.log(`Private: ${data.private ? 'Yes' : 'No'}`);
+      if (data.visibility) {
+        console.log(`Visibility: ${data.visibility}`);
+      } else {
+        // Backward compatibility: show private status if visibility not available
+        console.log(`Private: ${data.private ? 'Yes' : 'No'}`);
+      }
+      if (data.projectRelays && data.projectRelays.length > 0) {
+        console.log(`Project Relays: ${data.projectRelays.join(', ')}`);
+      }
       console.log(`Owner: ${data.owner || npub}`);
       
       if (cloneUrlReachability && cloneUrlReachability.length > 0) {
@@ -221,21 +229,134 @@ export async function repos(args, server, json) {
     }
   } else if (subcommand === 'settings' && args[1] && args[2]) {
     const [npub, repo] = args.slice(1);
+    
+    // Show help if requested
+    if (args[3] === '--help' || args[3] === '-h') {
+      console.log('Repository Settings:');
+      console.log('');
+      console.log('Get settings:');
+      console.log('  gitrep repos settings <npub> <repo>');
+      console.log('');
+      console.log('Update settings:');
+      console.log('  gitrep repos settings <npub> <repo> [options]');
+      console.log('');
+      console.log('Options:');
+      console.log('  --description <text>     Update repository description');
+      console.log('  --visibility <level>     Set visibility level');
+      console.log('                          Values: public, unlisted, restricted, private');
+      console.log('  --project-relay <url>    Add project relay (can be used multiple times)');
+      console.log('                          Required for unlisted and restricted visibility');
+      console.log('  --private <true|false>  (Deprecated) Use --visibility instead');
+      console.log('');
+      console.log('Visibility levels:');
+      console.log('  public     - Repository and events published to all relays + project relay');
+      console.log('  unlisted   - Repository public, events only to project relay');
+      console.log('  restricted - Repository private, events only to project relay');
+      console.log('  private    - Repository private, no relay publishing (git-only)');
+      console.log('');
+      console.log('Examples:');
+      console.log('  gitrep repos settings npub1... myrepo --description "My repo"');
+      console.log('  gitrep repos settings npub1... myrepo --visibility unlisted --project-relay wss://relay.example.com');
+      console.log('  gitrep repos settings npub1... myrepo --visibility restricted --project-relay wss://relay1.com --project-relay wss://relay2.com');
+      process.exit(0);
+    }
+    
     if (args[3]) {
       // Update settings
       const settings = {};
-      for (let i = 3; i < args.length; i += 2) {
-        const key = args[i].replace('--', '');
-        const value = args[i + 1];
-        if (key === 'description') settings.description = value;
-        else if (key === 'private') settings.private = value === 'true';
+      const projectRelays = [];
+      
+      // Parse arguments - handle both --key value and --key=value formats
+      for (let i = 3; i < args.length; i++) {
+        const arg = args[i];
+        
+        // Handle --key=value format
+        if (arg.includes('=')) {
+          const [key, value] = arg.split('=', 2);
+          const cleanKey = key.replace('--', '');
+          if (cleanKey === 'description') {
+            settings.description = value;
+          } else if (cleanKey === 'visibility') {
+            const vis = value.toLowerCase();
+            if (['public', 'unlisted', 'restricted', 'private'].includes(vis)) {
+              settings.visibility = vis;
+            } else {
+              console.error(`Error: Invalid visibility '${value}'. Must be one of: public, unlisted, restricted, private`);
+              process.exit(1);
+            }
+          } else if (cleanKey === 'project-relay') {
+            projectRelays.push(value);
+          } else if (cleanKey === 'private') {
+            // Backward compatibility: map private boolean to visibility
+            settings.visibility = value === 'true' ? 'restricted' : 'public';
+          }
+        } else if (arg.startsWith('--')) {
+          // Handle --key value format
+          const key = arg.replace('--', '');
+          const value = args[i + 1];
+          
+          if (!value || value.startsWith('--')) {
+            console.error(`Error: Missing value for flag ${arg}`);
+            process.exit(1);
+          }
+          
+          if (key === 'description') {
+            settings.description = value;
+            i++; // Skip next arg as it's the value
+          } else if (key === 'visibility') {
+            const vis = value.toLowerCase();
+            if (['public', 'unlisted', 'restricted', 'private'].includes(vis)) {
+              settings.visibility = vis;
+            } else {
+              console.error(`Error: Invalid visibility '${value}'. Must be one of: public, unlisted, restricted, private`);
+              process.exit(1);
+            }
+            i++; // Skip next arg as it's the value
+          } else if (key === 'project-relay') {
+            projectRelays.push(value);
+            i++; // Skip next arg as it's the value
+          } else if (key === 'private') {
+            // Backward compatibility: map private boolean to visibility
+            settings.visibility = value === 'true' ? 'restricted' : 'public';
+            i++; // Skip next arg as it's the value
+          }
+        }
       }
+      
+      // Add project relays if any were specified
+      if (projectRelays.length > 0) {
+        settings.projectRelays = projectRelays;
+      }
+      
       const data = await apiRequest(server, `/repos/${npub}/${repo}/settings`, 'POST', settings);
-      console.log(json ? JSON.stringify(data, null, 2) : 'Settings updated successfully');
+      if (json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log('Settings updated successfully');
+        console.log(`  Description: ${data.description || 'No description'}`);
+        console.log(`  Visibility: ${data.visibility || 'public'}`);
+        if (data.projectRelays && data.projectRelays.length > 0) {
+          console.log(`  Project Relays: ${data.projectRelays.join(', ')}`);
+        }
+      }
     } else {
       // Get settings
       const data = await apiRequest(server, `/repos/${npub}/${repo}/settings`, 'GET');
-      console.log(json ? JSON.stringify(data, null, 2) : JSON.stringify(data, null, 2));
+      if (json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(`Repository: ${npub}/${repo}`);
+        console.log(`Description: ${data.description || 'No description'}`);
+        console.log(`Visibility: ${data.visibility || 'public'}`);
+        if (data.projectRelays && data.projectRelays.length > 0) {
+          console.log(`Project Relays: ${data.projectRelays.join(', ')}`);
+        }
+        console.log(`Owner: ${data.owner || npub}`);
+        // Backward compatibility: show private status if visibility not available
+        if (!data.visibility && data.private !== undefined) {
+          console.log(`Private: ${data.private ? 'Yes' : 'No'}`);
+        }
+      }
     }
   } else if (subcommand === 'maintainers' && args[1] && args[2]) {
     const [npub, repo] = args.slice(1);

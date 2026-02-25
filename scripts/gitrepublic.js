@@ -106,7 +106,7 @@ Commands:
   config [server]               Show configuration (server URL)
   repos list                    List repositories
   repos get <npub> <repo>       Get repository info with clone URL reachability (or use naddr: repos get <naddr>)
-  repos settings <npub> <repo> [--description <text>] [--private <true|false>]  Get/update settings
+  repos settings <npub> <repo> [--description <text>] [--visibility <level>] [--project-relay <url>]  Get/update settings
   repos maintainers <npub> <repo> [add|remove <npub>]  Manage maintainers
   repos branches <npub> <repo>  List branches
   repos tags <npub> <repo>      List tags

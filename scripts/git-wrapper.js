@@ -275,40 +275,138 @@ Usage:
   gitrepublic <git-command> [arguments...]
   gitrep <git-command> [arguments...]  (shorter alias)
 
-Git Commands:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INITIAL SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Install the CLI:
+   npm install -g gitrepublic-cli
+
+2. Set your Nostr private key:
+   export NOSTRGIT_SECRET_KEY="nsec1..."
+   
+   Or add to your shell profile (~/.bashrc, ~/.zshrc, etc.) for persistence:
+   echo 'export NOSTRGIT_SECRET_KEY="nsec1..."' >> ~/.bashrc
+
+3. Run the setup script:
+   gitrep-setup
+   
+   This will configure:
+   - Git credential helper (for automatic NIP-98 authentication)
+   - Commit signing hook (for automatic commit signatures)
+   
+   Options:
+   --credential-only          Only set up credential helper
+   --hook-only                Only set up commit hook
+   --domain <domain>          Configure for specific domain
+   --global-hook              Install hook globally for all repos
+
+4. (Optional) Configure server URL:
+   export GITREPUBLIC_SERVER="https://your-domain.com"
+   
+   Or use --server flag with commands:
+   gitrep --server https://your-domain.com repos list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GIT COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+All standard git commands work:
   gitrep clone https://domain.com/api/git/npub1.../repo.git gitrepublic-web
   gitrep push gitrepublic-web main
   gitrep pull gitrepublic-web main
   gitrep fetch gitrepublic-web
   gitrep branch
   gitrep commit -m "My commit"
+  gitrep status
+  gitrep log
 
-API Commands:
-  gitrep push-all [branch] [--force] [--tags] [--dry-run]  Push to all remotes
-  gitrep repos list                                         List repositories
-  gitrep repos get <npub> <repo>                           Get repository info
-  gitrep publish <subcommand>                              Publish Nostr events
-  gitrep search <query>                                    Search repositories
-  gitrep verify <event-file>                               Verify Nostr events
-  gitrep config [server]                                   Show configuration
-
-Note: "gitrep" is a shorter alias for "gitrepublic" - both work the same way.
+Note:
+"gitrep" is a shorter alias for "gitrepublic" - both work the same way.
 We suggest using "gitrepublic-web" as the remote name instead of "origin"
 because "origin" is often already set to GitHub, GitLab, or other services.
 
-Features:
-  - Works with all git commands (clone, push, pull, fetch, branch, merge, etc.)
-  - Enhanced error messages for GitRepublic repositories
-  - Detailed authentication and permission error information
-  - Transparent pass-through for non-GitRepublic repositories (GitHub, GitLab, etc.)
-  - API commands for repository management and Nostr event publishing
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+API COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Repository Management:
+  gitrep repos list                           List all repositories
+  gitrep repos get <npub> <repo>              Get repository info with clone URLs
+  gitrep repos settings <npub> <repo>         Get/update repository settings
+  gitrep repos settings <npub> <repo> \\
+    --visibility public \\
+    --project-relay wss://relay.example.com
+  gitrep repos maintainers <npub> <repo>      Manage maintainers
+  gitrep repos branches <npub> <repo>         List branches
+  gitrep repos tags <npub> <repo>             List tags
+  gitrep repos fork <npub> <repo>             Fork a repository
+  gitrep repos delete <npub> <repo>           Delete a repository
+
+File Operations:
+  gitrep file get <npub> <repo> <path> [branch]     Get file content
+  gitrep file put <npub> <repo> <path> [file]       Create/update file
+  gitrep file delete <npub> <repo> <path>           Delete file
+
+Publishing:
+  gitrep publish repo-announcement <repo>     Publish repository announcement
+  gitrep publish pr <owner> <repo> <title>    Create pull request
+  gitrep publish issue <owner> <repo> <title> Create issue
+  gitrep publish patch <owner> <repo> <file> Publish patch
+  gitrep publish --help                       Show all publish commands
+
+Other:
+  gitrep push-all [branch] [--force] [--tags]  Push to all remotes
+  gitrep pull-all [branch] [--merge] [--rebase] Fetch and merge from all remotes
+  gitrep search <query>                        Search repositories
+  gitrep verify <event-file>                   Verify Nostr event signatures
+  gitrep config [server]                       Show configuration
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Git Operations:
+  ✓ Works with all git commands (clone, push, pull, fetch, branch, merge, etc.)
+  ✓ Enhanced error messages for GitRepublic repositories
+  ✓ Detailed authentication and permission error information
+  ✓ Transparent pass-through for non-GitRepublic repositories (GitHub, GitLab, etc.)
+  ✓ Automatic NIP-98 authentication via credential helper
+  ✓ Automatic commit signing with Nostr keys
+
+API Access:
+  ✓ Full repository management from command line
+  ✓ Publish Nostr events (announcements, PRs, issues, patches)
+  ✓ Search and discover repositories
+  ✓ Manage maintainers and settings
+  ✓ Visibility control (public, unlisted, restricted, private)
 
 For GitRepublic repositories, the wrapper provides:
   - Detailed 401/403 error messages with pubkeys and maintainer information
   - Helpful guidance on how to fix authentication issues
   - Automatic fetching of error details from the server
+  - Automatic commit signing (if hook is installed)
 
-Run any command with --help for detailed usage information.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ENVIRONMENT VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Required:
+  NOSTRGIT_SECRET_KEY          Nostr private key (nsec or hex) for authentication
+
+Optional:
+  GITREPUBLIC_SERVER            Default server URL (default: http://localhost:5173)
+  NOSTR_RELAYS                  Comma-separated relay URLs for publishing events
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HELP & DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run any command with --help for detailed usage:
+  gitrep --help                 Show this help
+  gitrep repos --help           Show repos command help
+  gitrep repos settings --help  Show settings command help
+  gitrep publish --help         Show publish command help
 
 Documentation: https://github.com/silberengel/gitrepublic-cli
 GitCitadel: Visit us on GitHub: https://github.com/ShadowySupercode or on our homepage: https://gitcitadel.com
