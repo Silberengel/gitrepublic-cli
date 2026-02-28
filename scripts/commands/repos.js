@@ -8,6 +8,31 @@ import { apiRequest } from '../utils/api.js';
 export async function repos(args, server, json) {
   const subcommand = args[0];
   
+  // Show help if no subcommand or help requested
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    console.log('Repository Operations:');
+    console.log('');
+    console.log('Commands:');
+    console.log('  list                    List all repositories (registered and local)');
+    console.log('  get <npub> <repo>       Get repository info with clone URL reachability');
+    console.log('                          (or use naddr: get <naddr>)');
+    console.log('  settings <npub> <repo>  Get/update repository settings');
+    console.log('                          Use --help for options');
+    console.log('  maintainers <npub> <repo> [add|remove <npub>]  Manage maintainers');
+    console.log('  branches <npub> <repo>  List branches');
+    console.log('  tags <npub> <repo>      List tags');
+    console.log('  fork <npub> <repo>     Fork a repository');
+    console.log('  delete <npub> <repo>   Delete a repository');
+    console.log('  poll                    Trigger repository polling (provisions new repos from Nostr)');
+    console.log('');
+    console.log('Examples:');
+    console.log('  gitrep repos list');
+    console.log('  gitrep repos get npub1abc... myrepo');
+    console.log('  gitrep repos poll');
+    console.log('');
+    process.exit(0);
+  }
+  
   if (subcommand === 'list') {
     // Get registered and unregistered repos from Nostr
     const listData = await apiRequest(server, '/repos/list', 'GET');
@@ -25,7 +50,7 @@ export async function repos(args, server, json) {
     async function checkVerification(npub, repoName) {
       try {
         // The verify endpoint doesn't require authentication, so we can call it directly
-        const url = `${server.replace(/\/$/, '')}/api/repos/${npub}/${repoName}/verify`;
+        const url = `${server.replace(/\/$/, '')}/api/repos/${npub}/${repoName}/verification`;
         const response = await fetch(url);
         if (!response.ok) {
           // If endpoint returns error, assume not verified
@@ -411,7 +436,7 @@ export async function repos(args, server, json) {
     }
   } else if (subcommand === 'fork' && args[1] && args[2]) {
     const [npub, repo] = args.slice(1);
-    const data = await apiRequest(server, `/repos/${npub}/${repo}/fork`, 'POST', {});
+    const data = await apiRequest(server, `/repos/${npub}/${repo}/forks`, 'POST', {});
     if (json) {
       console.log(JSON.stringify(data, null, 2));
     } else {
@@ -421,8 +446,22 @@ export async function repos(args, server, json) {
     const [npub, repo] = args.slice(1);
     const data = await apiRequest(server, `/repos/${npub}/${repo}/delete`, 'DELETE');
     console.log(json ? JSON.stringify(data, null, 2) : 'Repository deleted successfully');
+  } else if (subcommand === 'poll') {
+    // Trigger repository polling to provision new repos from Nostr announcements
+    const data = await apiRequest(server, '/repos/poll', 'POST');
+    if (json) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      if (data.success) {
+        console.log('Repository polling triggered successfully');
+        console.log('The server will fetch NIP-34 repo announcements and provision repositories that list this server\'s domain.');
+      } else {
+        console.error('Failed to trigger polling:', data.error || 'Unknown error');
+        process.exit(1);
+      }
+    }
   } else {
-    console.error('Invalid repos command. Use: list, get, settings, maintainers, branches, tags, fork, delete');
+    console.error('Invalid repos command. Use: list, get, settings, maintainers, branches, tags, fork, delete, poll');
     process.exit(1);
   }
 }

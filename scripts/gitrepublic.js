@@ -112,6 +112,7 @@ Commands:
   repos tags <npub> <repo>      List tags
   repos fork <npub> <repo>      Fork a repository
   repos delete <npub> <repo>    Delete a repository
+  repos poll                    Trigger repository polling (provisions new repos from Nostr)
   file get <npub> <repo> <path> [branch]  Get file content
   file put <npub> <repo> <path> [file] [message] [branch]  Create/update file
   file delete <npub> <repo> <path> [message] [branch]  Delete file
