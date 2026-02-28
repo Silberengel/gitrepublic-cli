@@ -23,12 +23,10 @@ export async function repos(args, server, json) {
     console.log('  tags <npub> <repo>      List tags');
     console.log('  fork <npub> <repo>     Fork a repository');
     console.log('  delete <npub> <repo>   Delete a repository');
-    console.log('  poll                    Trigger repository polling (provisions new repos from Nostr)');
     console.log('');
     console.log('Examples:');
     console.log('  gitrep repos list');
     console.log('  gitrep repos get npub1abc... myrepo');
-    console.log('  gitrep repos poll');
     console.log('');
     process.exit(0);
   }
@@ -446,22 +444,8 @@ export async function repos(args, server, json) {
     const [npub, repo] = args.slice(1);
     const data = await apiRequest(server, `/repos/${npub}/${repo}/delete`, 'DELETE');
     console.log(json ? JSON.stringify(data, null, 2) : 'Repository deleted successfully');
-  } else if (subcommand === 'poll') {
-    // Trigger repository polling to provision new repos from Nostr announcements
-    const data = await apiRequest(server, '/repos/poll', 'POST');
-    if (json) {
-      console.log(JSON.stringify(data, null, 2));
-    } else {
-      if (data.success) {
-        console.log('Repository polling triggered successfully');
-        console.log('The server will fetch NIP-34 repo announcements and provision repositories that list this server\'s domain.');
-      } else {
-        console.error('Failed to trigger polling:', data.error || 'Unknown error');
-        process.exit(1);
-      }
-    }
   } else {
-    console.error('Invalid repos command. Use: list, get, settings, maintainers, branches, tags, fork, delete, poll');
+    console.error('Invalid repos command. Use: list, get, settings, maintainers, branches, tags, fork, delete');
     process.exit(1);
   }
 }
